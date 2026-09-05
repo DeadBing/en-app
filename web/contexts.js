@@ -1,4 +1,5 @@
 import { expandedWords } from './vocabulary-expansion.js';
+import { contextTranslations } from './context-translations.js';
 // A second original context for each built-in expression, independent of its study example.
 export const contexts = Object.fromEntries(`
 claim|Your claim needs a source, not just a confident tone.
@@ -195,6 +196,14 @@ end up|Without a clear question, the discussion may end up going nowhere.
 keep in mind|When comparing prices, keep in mind the total cost.
 `.trim().split('\n').map(row => row.split('|')));
 Object.assign(contexts, Object.fromEntries(expandedWords.map(w => [w.term, w.secondExample])));
+
+// Keep the sentence and its translation together, including restored sessions.
+export function wordContext(word, exampleIndex = 0) {
+  if (exampleIndex && !word.id.startsWith('custom:') && contexts[word.term]) {
+    return { example: contexts[word.term], translation: contextTranslations[word.term] || '' };
+  }
+  return { example: word.example, translation: word.translation || '' };
+}
 
 export const readingGists = {
   'quiet-internet': 'A hobby does not have to make money. The author values enjoying it without turning it into another job.',

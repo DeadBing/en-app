@@ -6,8 +6,8 @@ android {
         applicationId = "app.readwell.english"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.4.1"
     }
     buildFeatures { buildConfig = true }
     sourceSets { getByName("main").assets.srcDir("../../dist") }
