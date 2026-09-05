@@ -1,3 +1,6 @@
+import { advancedGrammar } from './advanced-grammar.js';
+import { advancedReadings } from './advanced-readings.js';
+
 function lesson(id, level, title, subtitle, rule, examples, tasks) {
   return { id, level, title, subtitle, rule, examples, tasks: tasks.map(([prompt, answer, why, alternatives = []]) => ({ prompt, answer, why, alternatives })) };
 }
@@ -134,6 +137,8 @@ export const grammar = [
 ];
 
 // Original educational texts inspired by formats, not copied social posts.
+grammar.push(...advancedGrammar);
+
 export const readings = [
   {
     id: 'quiet-internet', title: 'Maybe the internet needs to be a little quieter', category: 'Reddit', level: 'B1', time: 3, color: 'sage', author: 'r / everydaythoughts',
@@ -208,3 +213,5 @@ export const readings = [
     ],
   },
 ];
+
+readings.push(...advancedReadings);

@@ -5,7 +5,7 @@ export const LEGACY_KEY = 'readwell.v1';
 export const DAY = 86400000;
 export const dayKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const scheduler = fsrs({ request_retention: 0.9, maximum_interval: 365, enable_fuzz: false, learning_steps: ['10m'], relearning_steps: ['10m'] });
-const empty = () => ({ version: 2, cards: {}, lessons: {}, readings: {}, grammarCards: {}, days: {}, custom: [], saved: [], notes: {}, readingNotes: {}, session: null, dailyTarget: 10, newWordsPerDay: 5 });
+const empty = () => ({ version: 2, cards: {}, lessons: {}, readings: {}, grammarCards: {}, days: {}, custom: [], saved: [], notes: {}, readingNotes: {}, writingNotes: {}, studyLevel: 'all', session: null, dailyTarget: 10, newWordsPerDay: 5 });
 
 export function loadState(storage = localStorage) {
   const current = storage.getItem(STORAGE_KEY);
@@ -28,7 +28,7 @@ export function loadState(storage = localStorage) {
   }
   return result;
 }
-export const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[‘’]/g, "'").replace(/[‐‑–—]/g, '-').replace(/\s+/g, ' ').trim().replace(/[.!?]+$/, '');
+export const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[‘’]/g, "'").replace(/[‐‑–—]/g, '-').replace(/\bwon't\b/g, 'will not').replace(/\bcan't\b/g, 'can not').replace(/\bshan't\b/g, 'shall not').replace(/n't\b/g, ' not').replace(/\bcannot\b/g, 'can not').replace(/'re\b/g, ' are').replace(/'ve\b/g, ' have').replace(/'ll\b/g, ' will').replace(/\bi'm\b/g, 'i am').replace(/\s+/g, ' ').trim().replace(/[.!?]+$/, '');
 export const matches = (value, answer, alternatives = []) => [answer, ...alternatives].some(a => normalize(a) === normalize(value));
 const time = value => new Date(value).getTime();
 export const trackName = mode => mode === 'meaning' ? 'meaning' : 'recall';
@@ -118,12 +118,12 @@ export function stats(state, words, now = Date.now()) {
   const cards = Object.entries(state.cards).filter(([id]) => valid.has(id)).map(([, card]) => card);
   return { learning: cards.filter(c => !isRetained(c)).length, retained: cards.filter(isRetained).length, meaning: cards.filter(knowsMeaning).length, recall: cards.filter(recallsWord).length, difficult: cards.filter(needsWork).length, due: cards.filter(c => wordDue(c, 'mixed', now) <= now).length, seen: cards.length, today: state.days[dayKey(new Date(now))]?.attempts || 0 };
 }
-export function chooseWords(state, words, count = 8, mode = 'mixed', now = Date.now()) {
+export function chooseWords(state, words, count = 8, mode = 'mixed', now = Date.now(), freshLevel = 'all') {
   const due = words.filter(w => state.cards[w.id] && wordDue(state.cards[w.id], mode, now) <= now).sort((a, b) => wordDue(state.cards[a.id], mode, now) - wordDue(state.cards[b.id], mode, now));
   const newAllowance = Math.max(0, state.newWordsPerDay - (state.days[dayKey(new Date(now))]?.newWords || 0));
   const backlog = Object.values(state.cards).filter(c => wordDue(c, 'mixed', now) <= now).length;
   if (backlog >= 20 || !newAllowance) return due.slice(0, count);
-  const fresh = words.filter(w => !state.cards[w.id]);
+  const fresh = words.filter(w => !state.cards[w.id] && (freshLevel === 'all' || w.level === freshLevel));
   const priority = fresh.filter(w => state.saved.includes(w.id));
   const buckets = {};
   for (const word of fresh) if (!state.saved.includes(word.id)) (buckets[word.topic] ||= []).push(word);
@@ -131,7 +131,7 @@ export function chooseWords(state, words, count = 8, mode = 'mixed', now = Date.
   for (let i = 0; i < Math.max(0, ...Object.values(buckets).map(b => b.length)); i++) for (const bucket of Object.values(buckets)) if (bucket[i]) broad.push(bucket[i]);
   return [...due, ...[...priority, ...broad].slice(0, newAllowance)].slice(0, count);
 }
-export function chooseGrammar(state, lessons, count = 4, now = Date.now()) {
+export function chooseGrammar(state, lessons, count = 4, now = Date.now(), freshLevel = 'all') {
   const due = [];
   const fresh = [];
   for (let index = 0; index < Math.max(...lessons.map(g => g.tasks.length)); index++) {
@@ -143,7 +143,27 @@ export function chooseGrammar(state, lessons, count = 4, now = Date.now()) {
     }
   }
   due.sort((a, b) => (time(state.grammarCards[`${a.id}:${a.index}`]?.card?.due) || 0) - (time(state.grammarCards[`${b.id}:${b.index}`]?.card?.due) || 0));
-  const next = lessons.find(g => !state.lessons[g.id]?.completed && g.tasks.some((_, i) => !state.grammarCards[`${g.id}:${i}`]));
+  const next = lessons.find(g => (freshLevel === 'all' || g.level === freshLevel) && !state.lessons[g.id]?.completed && g.tasks.some((_, i) => !state.grammarCards[`${g.id}:${i}`]));
   if (next) for (let index = 0; index < next.tasks.length; index++) if (!state.grammarCards[`${next.id}:${index}`] && !due.some(t => t.id === next.id && t.index === index)) fresh.push({ kind: 'grammar', id: next.id, index, key: `grammar:${next.id}:${index}` });
   return [...due, ...fresh].slice(0, count);
+}
+
+export function rememberWordReview(state, task, feedback, now) {
+  const session = state.session, day = dayKey(new Date(now));
+  // Snapshot only the mutation made by this review. Notes/settings edited while
+  // paused are intentionally outside the undo operation.
+  session.undo = JSON.parse(JSON.stringify({ index: session.index, key: task.key, id: task.id,
+    day, dayBefore: state.days[day] ?? null, cardBefore: state.cards[task.id] ?? null,
+    resultsLength: session.results.length, queueLength: session.queue.length, feedback: feedback ?? null }));
+}
+export function undoWordReview(state) {
+  const session = state.session, undo = session?.undo;
+  if (!undo || !session.feedback?.recorded || undo.index !== session.index || undo.key !== session.queue[session.index]?.key) return false;
+  if (undo.cardBefore === null) delete state.cards[undo.id]; else state.cards[undo.id] = undo.cardBefore;
+  if (undo.dayBefore === null) delete state.days[undo.day]; else state.days[undo.day] = undo.dayBefore;
+  session.results.length = undo.resultsLength;
+  session.queue.length = undo.queueLength;
+  if (undo.feedback) session.feedback = undo.feedback; else delete session.feedback;
+  delete session.undo;
+  return true;
 }
