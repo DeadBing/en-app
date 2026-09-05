@@ -1,0 +1,17 @@
+{
+  "name": "readwell-english",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite web --host 127.0.0.1 --port 5173",
+    "build": "vite build web --base ./ --outDir ../dist --emptyOutDir",
+    "preview": "vite preview web --host 127.0.0.1 --port 5173 --outDir ../dist"
+  },
+  "devDependencies": {
+    "vite": "7.1.5"
+  },
+  "dependencies": {
+    "ts-fsrs": "5.4.2"
+  }
+}
