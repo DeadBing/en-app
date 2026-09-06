@@ -1,4 +1,7 @@
 import { transferTasks } from './transfer.js';
+import { chapters, chapterFor, currentLesson, lessonStatus, recordCourseAnswer, grammarTerms } from './course.js';
+import { renderHome, renderCourse, renderGuide, renderLesson, renderPractice, renderCourseProgress } from './course-ui.js';
+import { grammarKey } from './store.js';
 import { phraseFamilies } from './practical-vocabulary.js';
 import { workshops, reviewWriting } from './workshops.js';
 import { workshopView } from './workshop-ui.js';
@@ -7,7 +10,7 @@ import { sentenceAnalysis, answerDiagnosis } from './learning.js';
 import { engagement, awardXP, STREAK_TARGET } from './engagement.js';
 import { topics, words as builtInWords } from './words.js';
 import { grammar, readings } from './lessons.js';
-import { wordContext, readingGists, grammarVariants } from './contexts.js';
+import { wordContext, readingGists } from './contexts.js';
 import { STORAGE_KEY, dayKey, loadState, matches, recordActivity, reviewWord, stats, chooseWords, Rating, wordDue, nextWordMode, trackName, trackDue, knowsMeaning, recallsWord, isRetained, needsWork, ratingIntervals, intervalLabel, chooseGrammar, reviewGrammar, rememberWordReview, undoWordReview } from './store.js';
 
 const app = document.querySelector('#app');
@@ -46,9 +49,12 @@ const paths = {
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.book}</svg>`;
 const btn = (label, action, cls = 'primary', extra = '') => `<button type="button" class="btn ${cls}" data-action="${action}" ${extra}>${label}</button>`;
-const navItems = [['today', 'home', 'Сегодня'], ['vocabulary', 'layers', 'Словарь'], ['grammar', 'book', 'Грамматика'], ['reading', 'compass', 'Чтение'], ['progress', 'chart', 'Прогресс']];
+const navItems = [['today', 'home', 'Сегодня'], ['course', 'compass', 'Курс'], ['practice', 'layers', 'Практика'], ['progress', 'chart', 'Прогресс']];
+const courseUI = { icon, btn, buddy };
 let state;
 let page = 'today';
+let selectedLesson = null;
+let lessonReturn = 'course';
 let selectedTopic = 'all';
 let wordFilter = 'all';
 let wordLevel = 'all';
@@ -82,7 +88,8 @@ function save() {
 }
 function navigate(next) { page = next; summary = null; render(); window.scrollTo(0, 0); }
 function nav() {
-  return navItems.map(([id, glyph, label]) => `<button class="nav-item ${(page === id || page === 'writing' && id === 'reading') ? 'active' : ''}" data-action="nav" data-page="${id}" ${(page === id || page === 'writing' && id === 'reading') ? 'aria-current="page"' : ''}>${icon(glyph)}<span>${label}</span>${id === 'vocabulary' && s().due ? `<span class="nav-count">${s().due}</span>` : ''}</button>`).join('');
+  const active = ['vocabulary', 'reading', 'writing'].includes(page) ? 'practice' : ['grammar', 'lesson'].includes(page) ? 'course' : page;
+  return navItems.map(([id, glyph, label]) => `<button class="nav-item ${active === id ? 'active' : ''}" data-action="nav" data-page="${id}" ${active === id ? 'aria-current="page"' : ''}>${icon(glyph)}<span>${label}</span></button>`).join('');
 }
 function header(kicker, title, description, aside = '') {
   return `<header class="page-header"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p class="muted">${description}</p></div>${aside}</header>`;
@@ -97,7 +104,7 @@ function themeButton() {
 }
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0f1a24' : '#f6f9fc';
+  document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#141313' : '#f6f1e8';
   try { localStorage.setItem('readwell.theme', theme); } catch { toast('Тема изменена, но её не удалось сохранить.'); }
   window.ReadwellTheme?.postMessage(theme);
   document.querySelectorAll('.theme-toggle').forEach(button => {
@@ -112,27 +119,12 @@ function applyTheme(theme) {
 function render() {
   practiceSettingsOpen = document.querySelector('.practice-settings')?.open ?? practiceSettingsOpen;
   const game = engagement(state);
-  const focus = !!(state.session && page === 'session') || !!summary;
+  const focus = !!(state.session && page === 'session') || page === 'lesson' || !!summary;
   app.classList.toggle('focus-mode', focus);
   app.innerHTML = `<aside class="sidebar"><button class="brand" data-action="nav" data-page="today"><span class="brand-mark">${icon('bookmark')}</span>readwell<span class="brand-dot">.</span></button><div class="sidebar-caption">АНГЛИЙСКИЙ СО СМЫСЛОМ</div><nav aria-label="Основная навигация">${nav()}</nav><div class="sidebar-note">${buddy()}<p>Одно занятие.<br><strong>Ближе к пониманию.</strong></p></div><button class="profile" data-action="settings"><span class="avatar">R</span><span>Твой английский<small>Учись в своём темпе</small></span>${icon('settings')}</button></aside>
-    <div class="workspace"><header class="topbar"><button class="mobile-brand" data-action="nav" data-page="today">readwell<span>.</span></button><span class="topbar-label">Твой путь к английскому</span><div class="topbar-right"><button class="resource streak-resource" data-action="nav" data-page="progress" aria-label="Серия: ${game.streak} ${plural(game.streak,'день','дня','дней')}">${icon('flame')}<strong>${game.streak}</strong><span>${plural(game.streak,'день','дня','дней')}</span></button><button class="resource xp-resource" data-action="nav" data-page="progress" aria-label="${game.xp} XP за всё время">${icon('bolt')}<strong>${game.xp}</strong><span>XP</span></button>${themeButton()}<button class="icon-button" data-action="settings" aria-label="Настройки">${icon('settings')}</button></div></header><main id="main">${state.session && page === 'session' ? sessionView() : summary ? summaryView() : ({ today: todayView, vocabulary: vocabularyView, grammar: grammarView, reading: readingView, writing: () => workshopView(state, workshopId), progress: progressView }[page] || todayView)()}</main><footer class="desktop-footer"><span>READWELL · СЛОВА СТАНОВЯТСЯ СМЫСЛОМ</span><span>${icon('check')} Доступно без интернета</span></footer></div><nav class="bottom-nav" aria-label="Разделы">${nav()}</nav>`;
+    <div class="workspace"><header class="topbar"><button class="mobile-brand" data-action="nav" data-page="today">readwell<span>.</span></button><span class="topbar-label">Твой путь к английскому</span><div class="topbar-right"><button class="resource streak-resource" data-action="nav" data-page="progress" aria-label="Серия: ${game.streak} ${plural(game.streak,'день','дня','дней')}">${icon('flame')}<strong>${game.streak}</strong><span>${plural(game.streak,'день','дня','дней')}</span></button><button class="resource xp-resource" data-action="nav" data-page="progress" aria-label="${game.xp} XP за всё время">${icon('bolt')}<strong>${game.xp}</strong><span>XP</span></button>${themeButton()}<button class="icon-button" data-action="settings" aria-label="Настройки">${icon('settings')}</button></div></header><main id="main">${state.session && page === 'session' ? sessionView() : summary ? summaryView() : ({ today: () => renderHome(state, courseUI), course: () => renderCourse(state, courseUI), practice: () => renderPractice(state, courseUI, transferPanel()), lesson: () => renderLesson(state, selectedLesson, courseUI, writingView(grammar.find(g => g.id === selectedLesson))), vocabulary: vocabularyView, grammar: grammarView, reading: readingView, writing: () => workshopView(state, workshopId), progress: progressView }[page] || (() => renderHome(state, courseUI)))()}</main><footer class="desktop-footer"><span>READWELL · СЛОВА СТАНОВЯТСЯ СМЫСЛОМ</span><span>${icon('check')} Доступно без интернета</span></footer></div><nav class="bottom-nav" aria-label="Разделы">${nav()}</nav>`;
 }
 
-function todayView() {
-  const counts = s(), game = engagement(state);
-  const today = state.days[dayKey()] || {};
-  const nextGrammar = grammar.find(g => g.id === chooseGrammar(state, grammar, 1, Date.now(), state.studyLevel)[0]?.id) || grammar[0];
-  const nextReading = nextReadingForLevel();
-  const steps = [
-    ['daily', '', 'bolt', state.session ? 'Продолжим с того же места?' : 'Твоё занятие на сегодня', 'Слова + грамматика + чтение', '≈ 10 минут', counts.today >= state.dailyTarget, 'teal'],
-    ['review', '', 'layers', counts.due ? 'Верни слова в память' : 'Пополни запас слов', counts.due ? `${counts.due} слов к повторению` : 'Общий и технический английский', 'B1–C1', !!today.kinds?.word, 'blue'],
-    ['lesson', nextGrammar.id, 'book', nextGrammar.title, nextGrammar.subtitle, `${nextGrammar.tasks.length} задания`, !!today.kinds?.grammar, 'coral'],
-    ['transfer', '', 'link', 'Примени без подсказки', 'Грамматика, смысл и стиль вперемешку', 'B2–C1', !!today.kinds?.transfer, 'blue'],
-    ['workshop-list', '', 'message', 'Вырази свою мысль', 'Письмо, аргумент или сравнение источников', '8 ситуаций', false, 'teal'],
-    ['read', nextReading.id, 'compass', 'Поймай смысл текста', nextReading.title, '≈ ' + nextReading.time + ' мин', !!today.kinds?.reading, 'gold'],
-  ];
-  return `<div class="home-layout"><div class="learning-route"><header class="route-heading"><div><span class="eyebrow">ТВОЙ УЧЕБНЫЙ МАРШРУТ</span><h1>Каждый день —<br><span>чуть увереннее.</span></h1><p>Понимай тексты. Находи нужные слова.</p></div>${buddy('hero-buddy')}</header><section class="unit-banner"><span class="unit-icon">${icon('globe')}</span><div><small>АНГЛИЙСКИЙ ДЛЯ РЕАЛЬНОЙ ЖИЗНИ</small><h2>От слова к пониманию</h2><span>Словарь B1–C1 · грамматика с основ</span></div></section><ol class="lesson-path">${steps.map(([action, id, glyph, title, description, meta, done, color], index) => `<li class="path-step ${color} ${index === 0 ? 'current' : ''}"><button class="path-node" data-action="${action}" data-id="${id}" aria-label="${e(title)}">${icon(glyph)}${done ? '<span class="node-check">' + icon('check') + '</span>' : ''}</button><div class="path-copy"><span class="path-meta">${index === 0 ? 'НАЧНИ ЗДЕСЬ' : 'ШАГ 0' + (index + 1)} · ${meta}</span><button class="path-title" data-action="${action}" data-id="${id}">${e(title)}</button><p>${e(description)}</p>${index === 0 ? btn(state.session ? 'Продолжить ' + icon('arrow') : 'Начать занятие ' + icon('arrow'), 'daily') : ''}</div></li>`).join('')}</ol><div class="route-end">${icon('compass')}<div><strong>Выбирай свой путь</strong><p>Все темы открыты. Загляни в словарь, чтобы выбрать B2, C1 или интересную тему.</p></div></div></div><aside class="daily-rail"><section class="panel streak-panel"><div class="section-top"><h2>Серия дней</h2><span class="badge coral">${game.best ? 'Рекорд: ' + game.best : 'Твой старт'}</span></div><div class="streak-total">${icon('flame')}<strong>${game.streak}</strong><span>${plural(game.streak,'день','дня','дней')}<br>подряд</span></div><p>${game.todayDone ? 'Сегодня в зачёте. Увидимся завтра!' : `Ещё ${game.remaining} ${plural(game.remaining,'ответ','ответа','ответов')}, чтобы ${game.streak ? 'продлить' : 'начать'} серию.`}</p><div class="week">${weekDots()}</div><small class="muted">5 проверенных ответов за день — один день серии.</small></section><section class="panel quests-panel"><div class="section-top"><h2>План на сегодня</h2>${icon('trophy')}</div>${[[counts.today, state.dailyTarget, 'Сделать маленький шаг', 'Проверенные ответы', 'bolt'], [today.kinds?.grammar || 0, 1, 'Разобраться в правиле', 'Хотя бы одно задание', 'book'], [today.kinds?.reading || 0, 1, 'Понять главную мысль', 'Ответить на вопрос к тексту', 'compass']].map(([n, target, title, sub, glyph]) => `<div class="quest ${n >= target ? 'complete' : ''}"><span class="quest-icon">${icon(n >= target ? 'check' : glyph)}</span><div><strong>${title}</strong><small>${sub}</small><div class="quest-meter"><div class="thin-track"><i style="width:${Math.min(100, n / target * 100)}%"></i></div><b>${Math.min(n, target)}/${target}</b></div></div></div>`).join('')}</section><section class="panel word-tip"><span class="badge blue">СНАЧАЛА ВСПОМНИ</span><h3>Пауза тоже помогает</h3><p>Попробуй найти ответ в памяти до того, как откроешь карточку. Сложные слова вернутся по расписанию.</p><button class="text-button" data-action="nav" data-page="vocabulary">Открыть словарь ${icon('arrow')}</button></section></aside></div>`;
-}
 
 function weekDots() {
   const current = new Date();
@@ -182,14 +174,14 @@ function showPhraseFamilies() {
   showDialog(`<span class="eyebrow">ЧАСТЫЕ СЛОВА В РАЗНЫХ РОЛЯХ</span><h2>Смысл живёт в выражении</h2><p>Нажми на выражение: два примера показывают, как оно работает. Эти карточки участвуют в обычных повторениях.</p><div class="phrase-families">${phraseFamilies.map(([root,...terms])=>`<section><h3 lang="en">${root}</h3>${terms.map(term=>{const w=builtInWords.find(w=>w.term===term);return `<button class="phrase-row" data-action="word" data-id="${e(w.id)}"><strong lang="en">${e(term)}</strong><span>${e(w.ru)}</span></button>`;}).join('')}</section>`).join('')}</div>`);
 }
 function grammarView() {
-  const completed = grammar.filter(g => state.lessons[g.id]?.completed).length;
-  const bands = { A1:'Надёжная основа', A2:'Связываем предложения', B1:'Понимаем сложные мысли', B2:'Объясняем и обсуждаем', C1:'Точность, подтекст и стиль' };
-  return `${header('ОТ ОСНОВ К СЛОЖНЫМ МЫСЛЯМ', 'Разберёмся в грамматике', 'A1–C1: правила, применение и самостоятельные фразы. Все темы открыты.', `<span class="level-pill"><strong>${completed} / ${grammar.length}</strong> ТЕМ ПРОЙДЕНО</span>`)}
-    ${transferPanel()}<div class="grammar-note">${icon('book')}<p><strong>От формы — к своей мысли.</strong> В B2–C1: пропуски, исправление ошибок, переформулирование и письменная практика.</p></div>
-    <div class="filter-scroll" role="group" aria-label="Уровень грамматики">${['all',...Object.keys(bands)].map(level => `<button class="filter ${grammarLevel === level ? 'selected' : ''}" data-action="grammar-level" data-id="${level}" aria-pressed="${grammarLevel === level}">${level === 'all' ? 'Все уровни' : level}</button>`).join('')}</div>
-    ${Object.entries(bands).filter(([level]) => grammarLevel === 'all' || grammarLevel === level).map(([level,title]) => `<section class="grammar-section"><div class="section-top"><h2><span class="level-badge">${level}</span> ${title}</h2><span class="small-label">${grammar.filter(g => g.level === level).length} ТЕМ</span></div><div class="lesson-list">${grammar.filter(g => g.level === level).map(g => {
-      const progress = state.lessons[g.id];
-      return `<button class="lesson-row" data-action="lesson" data-id="${g.id}"><span class="lesson-number ${progress?.completed ? 'complete' : ''}">${progress?.completed ? icon('check') : String(grammar.indexOf(g) + 1).padStart(2, '0')}</span><span class="lesson-title"><strong>${g.title}</strong><small>${g.subtitle}${g.writing ? ' · своя практика' : ''}</small></span><span class="lesson-state">${progress ? `${progress.best}/${g.tasks.length} верно` : `${g.tasks.length} задания`}</span>${icon('arrow')}</button>`;
+  const focus = currentLesson(state, grammar);
+  const bands = { A1:'Простая фраза', A2:'Время, сравнение и правила', B1:'Связываем мысли', B2:'Объясняем и обсуждаем', C1:'Точность и стиль' };
+  return `${header('СПРАВОЧНИК', 'Найди нужное правило', 'Объяснения, сравнения и практика для всех 48 тем.', btn('К карте курса', 'nav', 'outline', 'data-page="course"'))}
+    ${focus ? `<div class="catalog-current"><span>Текущая тема</span>${btn(focus.title + icon('arrow'), 'lesson', 'text-button', `data-id="${focus.id}"`)}</div>` : ''}
+    <div class="filter-scroll" role="group" aria-label="Уровень грамматики">${['all',...Object.keys(bands)].map(level => `<button class="filter ${grammarLevel === level ? 'selected' : ''}" data-action="grammar-level" data-id="${level}" aria-pressed="${grammarLevel === level}">${level === 'all' ? 'Все' : level}</button>`).join('')}</div>
+    ${Object.entries(bands).filter(([level]) => grammarLevel === 'all' || grammarLevel === level).map(([level,title]) => `<section class="grammar-section"><div class="section-top"><h2><span class="level-badge">${level}</span> ${title}</h2></div><div class="lesson-list">${grammar.filter(g => g.level === level).map(g => {
+      const status = lessonStatus(state, g);
+      return `<button class="lesson-row" data-action="lesson" data-id="${g.id}"><span class="lesson-number ${status.applied ? 'complete' : ''}">${status.applied ? icon('check') : String(grammar.indexOf(g)+1).padStart(2,'0')}</span><span class="lesson-title"><strong>${e(g.title)}</strong><small>${e(g.subtitle)}</small><span class="catalog-status">${status.label}${status.due ? ' · пора повторить' : ''}</span></span>${icon('arrow')}</button>`;
     }).join('')}</div></section>`).join('')}`;
 }
 
@@ -206,7 +198,7 @@ function achievementsView() {
 
 function progressView() {
   const counts = s(); const days = Object.values(state.days); const attempts = days.reduce((n, d) => n + d.attempts, 0); const correct = days.reduce((n, d) => n + d.correct, 0);
-  return `${header('ТВОЯ ИСТОРИЯ', 'Каждый шаг считается', 'Серия и XP показывают регулярность. Навыки — то, что удаётся вспомнить спустя время.')}${achievementsView()}
+  return `${header('ТВОЯ ИСТОРИЯ', 'Каждый шаг считается', 'Серия и XP показывают регулярность. Навыки — то, что удаётся вспомнить спустя время.')}${renderCourseProgress(state, courseUI)}${achievementsView()}
     <div class="stats-grid memory-stats">${[[counts.seen, 'Слов в практике'], [counts.meaning, 'Понимаю значение'], [counts.recall, 'Вспоминаю выражение'], [counts.due, 'К повторению'], [grammar.filter(g => state.lessons[g.id]?.completed).length, 'Тем грамматики'], [readings.filter(r => state.readings[r.id]?.completed).length, 'Текстов разобрано'], [Object.keys(state.transferCards).length, 'Смешанных заданий в практике'], [Object.values(state.workshopDrafts).filter(d => d.text?.trim()).length, 'Письменных черновиков']].map(([n, l]) => `<div class="stat panel"><strong>${n}</strong><span>${l}</span></div>`).join('')}</div>
     <div class="progress-layout"><section class="panel activity-panel"><div class="section-top"><h2>Последние 7 дней</h2><span class="badge">${attempts} ответов всего</span></div><div class="activity-chart">${Array.from({ length: 7 }, (_, i) => {
       const d = new Date(); d.setDate(d.getDate() - 6 + i); const n = state.days[dayKey(d)]?.attempts || 0;
@@ -232,7 +224,13 @@ function showWord(id) {
 }
 function showLesson(id) {
   const g = grammar.find(g => g.id === id); if (!g) return;
-  showDialog(`<span class="eyebrow">ГРАММАТИКА · ${g.level}</span><h2>${g.title}</h2><p class="lesson-subtitle">${g.subtitle}</p><p class="rule">${g.rule}</p><div class="example-list">${g.examples.map(ex => `<p>${e(ex)}</p>`).join('')}</div>${btn(`Попробовать · ${g.tasks.length} задания ` + icon('arrow'), 'start-grammar', 'primary full', `data-id="${id}"`)}${writingView(g)}`);
+  if (page === 'session') {
+    if (!feedback) { state.session.queue[state.session.index].assisted = true; save(); }
+    showDialog(`<h2>${e(g.title)}</h2>${renderGuide(g, courseUI)}`);
+    return;
+  }
+  if (page !== 'lesson') lessonReturn = page;
+  selectedLesson = id; dialog.close(); navigate('lesson');
 }
 
 function annotated(body) {
@@ -245,10 +243,14 @@ function annotated(body) {
 function showReading(id) {
   const r = readings.find(r => r.id === id); if (!r) return;
   showDialog(`<article class="reader"><span class="eyebrow">${e(r.category)} · ${r.level} · ${r.time} МИН</span><h2 lang="en">${r.title}</h2><div class="reader-author">${icon('book')} ${e(r.author)}</div><details id="reader-source" open><summary>Текст для чтения</summary><div class="reader-body" lang="en">${annotated(r.body)}</div></details><div id="glossary" class="glossary" aria-live="polite"><span>${icon('bookmark')} Нажми на выделенное выражение, чтобы увидеть перевод.</span></div><div class="retell-invitation"><h3>Поймай главную мысль</h3><p>После чтения закрой текст и перескажи суть в 1–2 предложениях. Можно на русском; если получается, попробуй на английском.</p>${btn('Скрыть текст и пересказать', 'retell', 'outline full')}</div><section id="retell-practice" hidden><label for="retell-input">Что автор хотел сказать?</label><textarea id="retell-input" data-id="${id}" rows="4" maxlength="2000" placeholder="Сформулируй мысль своими словами…">${e(state.readingNotes[id])}</textarea>${btn('Сравнить со смыслом текста', 'compare-gist', 'primary full', `data-id="${id}"`)}<div id="reading-gist" class="gist" hidden><span class="eyebrow">ОДИН ИЗ ВОЗМОЖНЫХ ПЕРЕСКАЗОВ</span><p lang="en">${e(readingGists[id] || r.gist)}</p><p class="muted">Сравни главную мысль и оговорки автора. Это ориентир для самопроверки, а не автоматическая оценка твоего английского.</p></div></section><p class="content-note">Оригинальный учебный текст · Readwell</p>${btn('Проверить понимание ' + icon('arrow'), 'start-reading', 'primary full', `data-id="${id}"`)}</article>`);
-}function startSession(title, queue, origin = page) {
+}function startSession(title, queue, origin = page, introduced = []) {
   if (!queue.length) { toast('Сейчас повторений нет или достигнут лимит новых слов. Можно почитать либо изменить лимит в настройках.'); return; }
   const begin = () => {
-    state.session = { title, queue, index: 0, results: [], origin, learned: [], readPassages: [], started: Date.now() };
+    state.session = { title, queue, index: 0, results: [], origin, learned: [], readPassages: [], grammarIntroduced: introduced, started: Date.now() };
+    if (origin === 'course') {
+      const topic = queue.find(t => t.kind === 'grammar');
+      if (topic) { state.courseFocus = topic.id; state.courseStart ||= topic.id; }
+    }
     feedback = null; summary = null; page = 'session'; dialog.close(); save(); render(); window.scrollTo(0, 0);
   };
   if (state.session) {
@@ -260,8 +262,10 @@ let pendingStart = null;
 function wordTasks(list, mode = practiceMode) {
   return list.map(w => ({ kind: 'word', id: w.id, mode: mode === 'mixed' ? nextWordMode(state.cards[w.id]) : mode, exampleIndex: (1 + (state.cards[w.id]?.attempts || 0)) % 2, key: `word:${w.id}` }));
 }
-function prepareGrammar(task) { return { ...task, variant: (state.grammarCards[`${task.id}:${task.index}`]?.card?.reps || 0) % 2 }; }
-function grammarTasks(g) { return g.tasks.map((_, index) => prepareGrammar({ kind: 'grammar', id: g.id, index, key: `grammar:${g.id}:${index}` })); }
+function prepareGrammar(task) { return { ...task, review: task.stage === 'apply' && !!state.grammarCards[grammarKey(task)], variant: task.stage === 'apply' || task.stage === 'guided' ? 0 : (state.grammarCards[grammarKey(task)]?.card?.reps || 0) % 2 }; }
+function grammarTasks(g, stage = 'guided') {
+  return (stage === 'apply' ? g.checks : g.tasks).map((_, index) => prepareGrammar({ kind: 'grammar', id: g.id, index, stage, key: stage === 'apply' ? `grammar:${g.id}:apply:${index}` : `grammar:${g.id}:${index}` }));
+}
 function readingTasks(r) { return r.questions.map((_, index) => ({ kind: 'reading', id: r.id, index, key: `reading:${r.id}:${index}` })); }
 function nextReadingForLevel() {
   const list = readings.filter(r => state.studyLevel === 'all' || r.level === state.studyLevel);
@@ -270,9 +274,17 @@ function nextReadingForLevel() {
 }
 function daily() {
   if (state.session) { feedback = state.session.feedback || null; page = 'session'; summary = null; render(); return; }
-  const r = nextReadingForLevel();
-  startSession('Вспомнить · разобраться · прочитать', [...wordTasks(chooseWords(state, allWords(), 5, 'mixed', Date.now(), state.studyLevel), 'mixed'), ...chooseGrammar(state, grammar, 4, Date.now(), state.studyLevel).map(prepareGrammar), ...chooseTransfer(state,transferTasks,2,Date.now(),state.studyLevel,true), ...readingTasks(r)], 'today');
+  const g = currentLesson(state, grammar), r = nextReadingForLevel();
+  const due = chooseGrammar(state, grammar, 3, Date.now(), 'all', true).filter(t => t.id !== g?.id).map(prepareGrammar);
+  const learning = g ? [...(lessonStatus(state, g).learned ? [] : grammarTasks(g)), ...grammarTasks(g, 'apply')] : [];
+  startSession(g ? g.title : 'Повторение и новые мысли', [...due, ...learning, ...wordTasks(chooseWords(state, allWords(), 3, 'mixed', Date.now(), state.studyLevel), 'mixed'), ...chooseTransfer(state, transferTasks, 1, Date.now(), state.studyLevel, true), ...readingTasks(r)], 'today');
 }
+function duePractice() {
+  const queue = [...chooseGrammar(state, grammar, 12, Date.now(), 'all', true).map(prepareGrammar), ...wordTasks(allWords().filter(w => state.cards[w.id] && wordDue(state.cards[w.id], 'mixed') <= Date.now()).slice(0, 8), 'mixed'), ...chooseTransfer(state, transferTasks, 4, Date.now(), 'all', true)];
+  if (!queue.length) { toast('Сейчас повторений нет. Можно продолжить курс или выбрать практику.'); return; }
+  startSession('Вспомнить спустя время', queue, 'practice');
+}
+
 function wordExample(w, task) { return wordContext(w, task.exampleIndex).example; }
 function exampleTranslation(context, cls = 'sentence-translation') {
   return `<p class="${cls}" lang="ru">${e(context.translation || 'Перевод этого примера ещё не добавлен.')}</p>`;
@@ -281,8 +293,8 @@ function translatedExample(context) {
   return `<p class="explained-example" lang="en">${e(context.example)}</p>${exampleTranslation(context)}`;
 }
 function breakdownView(context, word = null, question = null) {
-  const notes = sentenceAnalysis(context.example, word, builtInWords);
-  return `<details class="sentence-analysis"><summary>Разобрать предложение</summary>${question ? `<p class="analysis-rule">${e(question.why)}</p>` : ''}<dl>${notes.map(note => `<div><dt lang="en">${e(note.text)}</dt><dd>${e(note.explanation)}${note.lessonId ? btn('Открыть правило','lesson','text-button',`data-id="${note.lessonId}"`) : ''}</dd></div>`).join('')}</dl>${!notes.length && !question ? '<p>Для этого примера разбор конструкций ещё не подготовлен.</p>' : '<p class="content-note">Здесь разобраны найденные выражения и конструкции. Смысл остальных слов уточняй по полному переводу.</p>'}</details>`;
+  const notes = sentenceAnalysis(context.example, word, builtInWords, question);
+  return `<details class="sentence-analysis"><summary>Разобрать предложение</summary>${question && !question.lessonId ? `<p class="analysis-rule">${e(question.why)}</p>` : ''}<dl>${notes.map(note => `<div><dt lang="en">${e(note.text)}</dt><dd>${e(note.explanation)}${note.lessonId ? btn('Открыть правило','lesson','text-button',`data-id="${note.lessonId}"`) : ''}</dd></div>`).join('')}</dl>${!notes.length && !question ? '<p>Для этого примера разбор конструкций ещё не подготовлен.</p>' : '<p class="content-note">Здесь разобраны найденные выражения и конструкции. Смысл остальных слов уточняй по полному переводу.</p>'}</details>`;
 }
 function cloze(w, task) {
   const escaped = w.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -297,9 +309,9 @@ function questionFor(task) {
     return { prompt: task.mode === 'context' ? cloze(w, task) : w.ru, answer: w.term, why: `${w.term} — ${w.ru}.`, alternatives: [], cue: task.mode === 'context' ? w.ru : 'Вспомни английское выражение из своего словаря.', w };
   }
   if (task.kind === 'grammar') {
-    const q = grammar.find(g => g.id === task.id).tasks[task.index];
-    const variant = task.variant && grammarVariants[task.id]?.[task.index];
-    return variant ? { ...q, prompt: variant[0], answer: variant[1], alternatives: [], why: `Правильная форма: ${variant[1]}. ${grammar.find(g => g.id === task.id).rule}` } : q;
+    const g = grammar.find(g => g.id === task.id);
+    const q = (task.stage === 'apply' ? g.checks : g.tasks)[task.index];
+    return task.variant && q.variant ? q.variant : q;
   }
   return readings.find(r => r.id === task.id).questions[task.index];
 }
@@ -311,35 +323,56 @@ function flashcardView(task, q) {
   const w = q.w, current = wordContext(w, task.exampleIndex), other = wordContext(w, task.exampleIndex ? 0 : 1);
   return `<div class="flashcard"><span class="badge sage">EN → смысл · ${e(getTopic(w.topic).name)}</span><h1 lang="en">${e(w.term)}</h1><p class="flash-context" lang="en">${e(current.example)}</p>${!task.revealed ? `<p class="muted">Сформулируй значение в голове или своими словами. Затем открой ответ.</p>${btn('Показать ответ', 'reveal-card', 'primary full')}` : `<div class="flash-answer"><h2>${e(w.ru)}</h2><div class="sentence-explanation"><span class="eyebrow">ПЕРЕВОД ПРЕДЛОЖЕНИЯ</span>${exampleTranslation(current)}</div>${breakdownView(current,w)}${other.example !== current.example ? `<details><summary>Другой пример</summary><p lang="en">${e(other.example)}</p>${exampleTranslation(other, 'other-translation')}</details>` : ''}${state.notes[w.id] ? `<div class="personal-cue">Твоя ассоциация: ${e(state.notes[w.id])}</div>` : ''}</div>${feedback?.recorded ? feedbackView(task,q) : ratingButtons(task,true)}`}</div>`;
 }
+function grammarSentence(q) {
+  const answer = typeof q.answer === 'string' ? q.answer : '';
+  const escaped = answer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = answer && q.sentence.match(new RegExp(`(?<![a-z])${escaped}(?![a-z])`, 'i'));
+  return match ? `${e(q.sentence.slice(0,match.index))}<mark>${e(match[0])}</mark>${e(q.sentence.slice(match.index+match[0].length))}` : e(q.sentence);
+}
 function feedbackView(task, q) {
-  const session = state.session;
-  return `<div class="answer-feedback ${feedback.correct ? 'correct' : 'incorrect'}" role="status"><strong>${icon(feedback.correct ? 'check' : 'book')}${feedback.self ? feedback.correct ? 'По твоей оценке — вспомнил' : 'Отправлено на повторение' : feedback.assisted && feedback.matched ? 'Верно, с опорой на подсказку' : feedback.correct ? 'Верно — смысл на месте' : feedback.hint ? 'Разберём и повторим' : 'Давай разберём ответ'}</strong>${feedback.xp ? `<span class="xp-earned">+${feedback.xp} XP</span>` : ''}${!feedback.correct ? `<div class="correct-answer">${e(q.options ? q.options[q.answer] : q.answer)}</div>` : ''}${feedback.diagnosis ? `<div class="answer-diagnosis"><b>${e(feedback.diagnosis.title)}</b><p>${e(feedback.diagnosis.text)}</p></div>` : `<p>${e(q.why)}</p>`}${task.kind === 'word' && task.mode !== 'meaning' ? `<div class="sentence-explanation"><span class="eyebrow">${task.mode === 'context' ? 'ПРЕДЛОЖЕНИЕ ЦЕЛИКОМ' : 'ПРИМЕР В КОНТЕКСТЕ'}</span>${translatedExample(wordContext(q.w, task.exampleIndex))}</div>${breakdownView(wordContext(q.w, task.exampleIndex),q.w)}` : ''}${['grammar','transfer'].includes(task.kind) && q.sentence ? `<div class="sentence-explanation"><span class="eyebrow">${e(q.skill || 'ПОЛНОЕ ПРЕДЛОЖЕНИЕ')}</span>${translatedExample({example:q.sentence,translation:q.translation})}</div>${breakdownView({example:q.sentence},null,q)}` : ''}${task.kind === 'word' && state.notes[task.id] ? `<p>Твоя ассоциация: ${e(state.notes[task.id])}</p>` : ''}${feedback.recorded && feedback.schedule ? `<p>${feedback.schedule.practice ? 'Это дополнительная практика. Расписание не изменилось.' : `Следующая проверка этого навыка: через ${intervalLabel(feedback.schedule.due)}.`}</p>` : ''}${feedback.recorded && session.undo ? `<div class="undo-review">${btn('Отменить оценку','undo-rating','outline full')}<small>До перехода дальше можно выбрать другую оценку.</small></div>` : ''}</div>${!feedback.recorded && task.kind === 'word' ? ratingButtons(task) : btn(session.index === session.queue.length - 1 ? 'Завершить занятие ' + icon('check') : 'Дальше ' + icon('arrow'), 'next', 'primary full')}`;
+  const session = state.session, supported = feedback.assisted && feedback.matched, guided = task.stage === 'guided';
+  const title = feedback.self ? feedback.correct ? 'По твоей оценке — вспомнил' : 'Отправлено на повторение' : supported ? 'Верно, с опорой' : feedback.correct ? guided ? 'Верно — разберём почему' : 'Ответ подходит' : feedback.hint ? 'Посмотрим на пример' : 'Давай разберём ответ';
+  return `<div class="answer-feedback ${supported ? 'supported' : feedback.correct ? 'correct' : 'incorrect'}" role="status"><strong>${icon(feedback.correct ? 'check' : 'book')}${title}</strong>${feedback.xp ? `<span class="xp-earned">+${feedback.xp} XP</span>` : ''}
+    ${!feedback.correct && !supported ? `<div class="correct-answer" lang="en">${e(q.options ? q.options[q.answer] : q.answer)}</div>` : ''}
+    ${feedback.diagnosis ? `<div class="answer-diagnosis"><b>${e(feedback.diagnosis.title)}</b><p>${e(feedback.diagnosis.text)}</p></div>` : `<p>${e(q.why)}</p>`}
+    ${task.kind === 'word' && task.mode !== 'meaning' ? `<div class="sentence-explanation"><span class="eyebrow">ПРИМЕР В КОНТЕКСТЕ</span>${translatedExample(wordContext(q.w, task.exampleIndex))}</div>${breakdownView(wordContext(q.w, task.exampleIndex),q.w)}` : ''}
+    ${['grammar','transfer'].includes(task.kind) && q.sentence ? `<div class="sentence-explanation"><span class="eyebrow">ПРЕДЛОЖЕНИЕ ЦЕЛИКОМ</span><p class="explained-example" lang="en">${grammarSentence(q)}</p>${exampleTranslation({translation:q.translation})}</div>${breakdownView({example:q.sentence},null,q)}` : ''}
+    ${task.kind === 'word' && state.notes[task.id] ? `<p>Твоя ассоциация: ${e(state.notes[task.id])}</p>` : ''}
+    ${guided ? '<p class="learning-feedback">Это обучение: можно пользоваться объяснением. Самостоятельное применение проверим на другом примере.</p>' : supported ? '<p class="learning-feedback">Ты нашёл подходящий ответ. Чтобы подтвердить самостоятельность, попробуем ещё раз без опоры.</p>' : ''}
+    ${feedback.recorded && feedback.schedule && !feedback.schedule.learning ? `<p class="schedule-note">${feedback.schedule.practice ? 'Дополнительная практика: расписание не изменилось.' : `Вернёмся к этому навыку через ${intervalLabel(feedback.schedule.due)}.`}</p>` : ''}
+    ${feedback.recorded && session.undo ? `<div class="undo-review">${btn('Отменить оценку','undo-rating','outline full')}<small>До перехода дальше можно выбрать другую оценку.</small></div>` : ''}
+    </div><div class="session-action-dock">${!feedback.recorded && task.kind === 'word' ? ratingButtons(task) : btn(session.index === session.queue.length - 1 ? 'Завершить занятие ' + icon('check') : 'Дальше ' + icon('arrow'), 'next', 'primary full')}</div>`;
 }
 function sessionView() {
-  const session = state.session; const task = session.queue[session.index]; const q = questionFor(task);
+  const session = state.session, task = session.queue[session.index], q = questionFor(task);
   const fresh = task.kind === 'word' && !state.cards[task.id] && !session.learned.includes(task.id);
   const g = task.kind === 'grammar' ? grammar.find(g => g.id === task.id) : null;
   const r = task.kind === 'reading' ? readings.find(r => r.id === task.id) : null;
+  const guided = g && task.stage === 'guided', application = g && task.stage === 'apply';
+  const intro = guided && !(session.grammarIntroduced || []).includes(g.id);
   const firstRead = r && !(session.readPassages || []).includes(r.id);
-  const frame = content => `<div class="session"><div class="session-top"><button class="icon-button" data-action="pause" aria-label="Сохранить и выйти из занятия">${icon('close')}</button><span>${e(session.title)}</span><strong>${session.index + 1} / ${session.queue.length}</strong>${themeButton()}</div><div class="session-track"><i style="width:${session.index / session.queue.length * 100}%"></i></div><div class="session-content"><div class="eyebrow">${task.retry ? 'ЕЩЁ РАЗ · БЕЗ УВЕЛИЧЕНИЯ ИНТЕРВАЛА' : fresh ? 'ПОЗНАКОМЬСЯ С ВЫРАЖЕНИЕМ' : { word: task.mode === 'meaning' ? 'ПОНИМАНИЕ · КАРТОЧКА СО СКРЫТЫМ ОТВЕТОМ' : task.mode === 'context' ? 'ПРИМЕНИ В КОНТЕКСТЕ' : 'ВСПОМНИ БЕЗ АНГЛИЙСКОГО ПРИМЕРА', grammar: `ГРАММАТИКА · ${g?.level}`, reading: `ПОНИМАНИЕ ТЕКСТА · ${r?.level}`, transfer: `СМЕШАННАЯ ПРАКТИКА · ${q.level}` }[task.kind]}</div>${content}</div><p class="session-foot">${icon('leaf')} ${fresh ? 'Сначала знакомство. Проверка вернётся после других заданий.' : 'Попытка вспомнить важнее скорости ответа.'}</p></div>`;
+  const label = intro ? 'РАЗОБРАТЬСЯ' : guided ? 'ПРАКТИКА С ОПОРОЙ' : application ? task.review ? 'САМОСТОЯТЕЛЬНО · ПОВТОРЕНИЕ' : 'САМОСТОЯТЕЛЬНО · НОВЫЙ КОНТЕКСТ' : { word: task.mode === 'meaning' ? 'ПОНИМАТЬ ЗНАЧЕНИЕ' : task.mode === 'context' ? 'ПРИМЕНИТЬ В КОНТЕКСТЕ' : 'ВСПОМНИТЬ ВЫРАЖЕНИЕ', grammar:'ПОВТОРЕНИЕ ГРАММАТИКИ', reading:`ЧТЕНИЕ · ${r?.level}`, transfer:'СМЕШАННАЯ ПРАКТИКА' }[task.kind];
+  const frame = content => `<div class="session"><div class="session-top"><button class="icon-button" data-action="pause" aria-label="Сохранить и выйти из занятия">${icon('close')}</button><span>${e(application && !feedback ? 'Применяем по смыслу' : session.title)}</span><strong>${session.index + 1} / ${session.queue.length}</strong>${themeButton()}</div><progress class="session-meter" value="${session.index}" max="${session.queue.length}" aria-label="Пройдено заданий в занятии"></progress><div class="session-content"><div class="eyebrow">${task.retry ? 'ЕЩЁ РАЗ · БЕЗ ДОПОЛНИТЕЛЬНОГО XP' : fresh ? 'СНАЧАЛА ПОЗНАКОМЬСЯ' : label}</div>${content}</div><p class="session-foot">${icon('leaf')} ${guided ? 'Объяснение помогает учиться. Здесь можно на него опираться.' : fresh ? 'Проверка вернётся после других заданий.' : 'В своём темпе. Сначала попробуй вспомнить.'}</p></div>`;
+  if (intro) return frame(`<h2>${e(g.title)}</h2>${renderGuide(g, courseUI)}<div class="session-action-dock">${btn('Понятно · попробую с опорой ' + icon('arrow'), 'grammar-understood', 'primary full', `data-id="${g.id}"`)}</div>`);
   if (fresh) return frame(`<div class="learn-word"><span class="badge sage">${e(q.w.level)}</span><h1 lang="en">${e(q.w.term)}</h1><p>${e(q.w.ru)}</p><blockquote lang="en">${e(q.w.example)}</blockquote><p class="muted">${e(q.w.translation)}</p>${btn('Запомнить и продолжить ' + icon('arrow'), 'learned', 'primary full')}</div>`);
   if (firstRead) return frame(`<h2 lang="en">${e(r.title)}</h2><p class="memory-caption">Прочитай ради смысла. Затем попробуй ответить, не подглядывая.</p><div class="reader-body" lang="en">${annotated(r.body)}</div><div id="glossary" class="glossary" aria-live="polite"></div>${btn('Прочитал · проверить понимание', 'read-passage', 'primary full')}`);
   if (task.kind === 'word' && task.mode === 'meaning') return frame(flashcardView(task,q));
-  return frame(`<h2>${task.kind === 'transfer' ? 'Выбери форму и передай смысл' : g ? e(g.title) : r ? e(r.title) : task.mode === 'context' ? 'Какое выражение здесь подходит?' : 'Как сказать это по-английски?'}</h2>
-    ${g ? `<details class="rule-details" data-help="true"><summary>Подсказка: правило и примеры</summary><p>${g.rule}</p>${g.examples.map(ex => `<p>${e(ex)}</p>`).join('')}</details>` : ''}
+  return frame(`<h2>${task.kind === 'transfer' || application ? 'Выбери по смыслу' : g ? e(g.title) : r ? e(r.title) : task.mode === 'context' ? 'Какое выражение подходит?' : 'Как сказать по-английски?'}</h2>
+    ${g ? guided ? `<div class="guided-support"><span class="eyebrow">ОПОРА ДЛЯ ЭТОГО ШАГА</span><p>${e(g.guide.form)}</p><details><summary>Почему выбираем эту форму</summary><p>${e(g.guide.decision)}</p>${g.guide.examples.map(ex=>`<p lang="en">${e(ex.sentence)}</p><p>${e(ex.translation)}</p>`).join('')}</details></div>` : `<details class="rule-details" data-help="true"><summary>Нужна опора? Открыть объяснение</summary>${renderGuide(g, courseUI, true)}</details>` : ''}
     ${r ? `<details class="reading-details" data-help="true"><summary>Заглянуть в текст</summary><div class="reader-body" lang="en">${annotated(r.body)}</div><div id="glossary" class="glossary" aria-live="polite"></div></details>` : ''}
-    <div class="question-prompt ${r ? 'comprehension' : ''}" lang="${r || task.mode === 'recall' ? 'ru' : 'en'}">${e(q.prompt)}</div>${q.cue ? `<p class="question-cue">${e(q.cue)}</p>` : ''}
+    <div class="question-prompt ${r ? 'comprehension' : ''}" lang="${/[а-яё]/i.test(q.prompt) ? 'ru' : 'en'}">${e(q.prompt)}</div>${q.cue ? `<p class="question-cue">${e(q.cue)}</p>` : ''}
     ${task.kind === 'word' && task.mode === 'recall' && !feedback ? task.assisted ? `<blockquote lang="en">${e(cloze(q.w,task))}</blockquote>` : btn('Подсказка: предложение', 'context-hint', 'text-button') : ''}
-    ${task.assisted && !feedback ? '<p class="memory-caption">Ответ с опорой на материал будет отмечен как практика с подсказкой.</p>' : ''}
-    <form id="answer-form">${q.options ? `<fieldset class="answer-options"><legend class="sr-only">Выбери ответ</legend>${q.options.map((opt, i) => `<label class="answer-option"><input type="radio" name="choice" value="${i}" ${feedback ? 'disabled' : ''} ${(feedback?.value ?? task.draft) === String(i) ? 'checked' : ''} required><span>${e(opt)}</span></label>`).join('')}</fieldset>` : `<label class="answer-label" for="answer-input">Твой ответ на английском</label>${['grammar','transfer'].includes(task.kind) && q.answer.includes(' ') ? `<textarea id="answer-input" class="answer-input" name="answer" rows="3" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Введи ответ на английском…" ${feedback ? 'disabled' : ''} required maxlength="400">${e(feedback?.value ?? task.draft ?? '')}</textarea>` : `<input id="answer-input" class="answer-input" name="answer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Введи слово или выражение…" ${feedback ? 'disabled' : ''} value="${e(feedback?.value ?? task.draft ?? '')}" required maxlength="400">`}`}
-    ${feedback ? feedbackView(task,q) : `<div class="answer-actions"><button type="submit" class="btn primary">Проверить ${icon('arrow')}</button>${btn('Не помню', 'hint', 'text-button')}</div>`}</form>`);
+    ${task.assisted && !feedback && !guided ? '<p class="memory-caption">Этот ответ будет отмечен как практика с опорой.</p>' : ''}
+    <form id="answer-form">${q.options ? `<fieldset class="answer-options"><legend class="sr-only">Выбери ответ</legend>${q.options.map((opt, i) => `<label class="answer-option"><input type="radio" name="choice" value="${i}" ${feedback ? 'disabled' : ''} ${(feedback?.value ?? task.draft) === String(i) ? 'checked' : ''} required><span lang="en">${e(opt)}</span></label>`).join('')}</fieldset>` : `<label class="answer-label" for="answer-input">${q.prompt.includes('___') ? 'Вставь пропущенную часть' : 'Твой ответ на английском'}</label>${['grammar','transfer'].includes(task.kind) && q.answer.includes(' ') ? `<textarea id="answer-input" class="answer-input" name="answer" rows="2" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Напиши по-английски…" ${feedback ? 'disabled' : ''} required maxlength="400">${e(feedback?.value ?? task.draft ?? '')}</textarea>` : `<input id="answer-input" class="answer-input" name="answer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Слово или выражение…" ${feedback ? 'disabled' : ''} value="${e(feedback?.value ?? task.draft ?? '')}" required maxlength="400">`}`}
+    ${feedback ? feedbackView(task,q) : `<div class="answer-actions session-action-dock"><button type="submit" class="btn primary">Проверить ${icon('arrow')}</button>${btn(guided ? 'Показать и объяснить' : 'Не помню', 'hint', 'text-button')}</div>`}</form>`);
 }
+
 function checkAnswer(value, hint = false) {
   if (feedback || !state.session) return;
   const task = state.session.queue[state.session.index]; const q = questionFor(task);
   task.assisted ||= !!document.querySelector('details[data-help][open]');
   const matched = !hint && (q.options ? Number(value) === q.answer : matches(value, q.answer, q.alternatives));
-  feedback = { value, correct: matched && !task.assisted, matched, hint, assisted: !!task.assisted, recorded: false, diagnosis: !matched && !hint ? answerDiagnosis(value,q,task.kind,allWords()) : null };
+  feedback = { value, correct: matched && (task.stage === 'guided' || !task.assisted), matched, hint, assisted: !!task.assisted, recorded: false, diagnosis: !matched && !hint ? answerDiagnosis(value,q,task.kind,allWords()) : null };
   if (task.kind === 'word' && feedback.correct) { state.session.feedback = feedback; save(); render(); }
   else commitAnswer(feedback.correct ? Rating.Good : Rating.Again);
 }
@@ -348,7 +381,7 @@ function commitAnswer(rating) {
   const task = session.queue[session.index];
   const self = task.kind === 'word' && task.mode === 'meaning';
   if (self && !task.revealed) return;
-  if (task.assisted || feedback?.hint) rating = Rating.Again;
+  if (task.assisted && task.stage !== 'guided' || feedback?.hint) rating = Rating.Again;
   const correct = rating > Rating.Again;
   const now = Date.now();
   if (task.kind === 'word' && (self || feedback?.correct)) rememberWordReview(state,task,feedback,now);
@@ -356,20 +389,24 @@ function commitAnswer(rating) {
   if (task.kind === 'word') feedback.schedule = reviewWord(state,task.id,rating,task.mode,now,!!task.retry);
   if (task.kind === 'grammar') {
     feedback.schedule = reviewGrammar(state,task,correct,now,!!task.retry);
-    if (!task.retry) state.grammarCards[`${task.id}:${task.index}`].lastCorrect = correct;
+    recordCourseAnswer(state, grammar.find(g => g.id === task.id), task, correct, now);
   }
   if (task.kind === 'transfer') feedback.schedule = reviewTransfer(state,task,correct,now,!!task.retry);
   recordActivity(state,correct,self ? 'self' : 'typed',now);
   feedback.xp = awardXP(state, task, correct,now);
-  session.results.push({ key:task.key, kind:task.kind, id:task.id, correct, retry:!!task.retry, mode:task.mode, self, xp:feedback.xp, assisted:!!task.assisted });
-  if (!correct && !task.retry) session.queue.push({ ...task, retry:true, assisted:false, revealed:false, draft:'' });
+  session.results.push({ key:task.key, kind:task.kind, id:task.id, index:task.index, stage:task.stage, review:task.review, practice:!!feedback.schedule?.practice, correct, retry:!!task.retry, mode:task.mode, self, xp:feedback.xp, assisted:!!task.assisted });
+  if (!correct && !task.retry) {
+    const retry = { ...task, retry:true, assisted:false, revealed:false, draft:'' };
+    const application = task.stage === 'guided' ? session.queue.findIndex((q, i) => i > session.index && q.id === task.id && q.stage === 'apply') : -1;
+    if (application >= 0) session.queue.splice(application, 0, retry); else session.queue.push(retry);
+  }
   session.feedback = feedback;
   updateCompletions(session); save(); render();
   document.querySelector('.answer-feedback')?.scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
 function updateCompletions(session) {
   for (const g of grammar) {
-    if (!session.results.some(r => r.kind === 'grammar' && r.id === g.id)) continue;
+    if (!session.results.some(r => r.kind === 'grammar' && r.id === g.id && !r.stage)) continue;
     const correct = g.tasks.filter((_,i) => state.grammarCards[`${g.id}:${i}`]?.lastCorrect).length;
     const best = Math.max(state.lessons[g.id]?.best || 0,correct);
     state.lessons[g.id] = { best, completed:best === g.tasks.length, practiced:true };
@@ -389,16 +426,30 @@ function nextQuestion() {
 }
 function summaryView() {
   const first = summary.results.filter(r => !r.retry), correct = first.filter(r => r.correct).length;
-  const errors = first.filter(r => !r.correct), selfRated = first.filter(r => r.self).length;
+  const errors = first.filter(r => !r.correct && !r.assisted), supported = first.filter(r => r.assisted).length;
   const xp = summary.results.reduce((n, r) => n + (r.xp || 0), 0), game = engagement(state);
-  return `<section class="summary">${buddy('summary-buddy')}<div class="eyebrow">ЗАНЯТИЕ ЗАВЕРШЕНО</div><h1>Ещё один шаг вперёд!</h1><p>${correct} из ${first.length} ответов с первой попытки.${selfRated ? ' Карточек с самооценкой: ' + selfRated + '.' : ''} ${errors.length ? 'Сложные места уже вернулись в практику.' : 'Можно дать знаниям уложиться.'}</p><div class="summary-stats"><div class="xp-summary">${icon('bolt')}<strong>+${xp}</strong><span>XP за занятие</span></div><div class="streak-summary">${icon('flame')}<strong>${game.streak}</strong><span>${plural(game.streak,'день','дня','дней')} подряд</span></div><div>${icon('check')}<strong>${first.length}</strong><span>заданий разобрано</span></div></div><div class="summary-streak">${game.todayDone ? 'Сегодняшний день серии засчитан!' : 'Ещё ' + game.remaining + ' ' + plural(game.remaining,'ответ','ответа','ответов') + ' до дня серии.'}<div class="week">${weekDots()}</div></div>${errors.length ? `<div class="summary-review"><h3>К чему вернуться</h3>${[...new Set(errors.map(r => r.kind === 'word' ? wordById(r.id).term : r.kind === 'transfer' ? transferTasks.find(q => q.id === r.id).skill : r.kind === 'grammar' ? grammar.find(g => g.id === r.id).subtitle : readings.find(t => t.id === r.id).title))].map(title => '<p>' + e(title) + '</p>').join('')}</div>` : ''}<div class="dialog-actions">${btn('Вернуться на маршрут ' + icon('arrow'), 'nav', 'primary', 'data-page="today"')}${btn('Посмотреть прогресс', 'nav', 'outline', 'data-page="progress"')}</div><p class="content-note">XP отмечают практику. Закрепление слов проверяется повторениями спустя время.</p></section>`;
+  const topics = [...new Set(first.filter(r => r.kind === 'grammar').map(r => r.id))].map(id => grammar.find(g => g.id === id));
+  const writingTopic = topics.find(g => first.some(r => r.id === g.id && r.stage === 'guided')) || topics.find(g => first.some(r => r.id === g.id && r.stage === 'apply' && !r.review));
+  const next = currentLesson(state, grammar);
+  return `<section class="summary"><span class="summary-symbol">${icon('check')}</span><div class="eyebrow">ЗАНЯТИЕ ЗАВЕРШЕНО</div><h1>Мысли стали яснее.</h1><p>${correct} из ${first.length} ответов верны с первой попытки.${supported ? ` С опорой: ${supported}.` : ''} ${first.some(r=>r.self) ? 'Словарные карточки включают твою самооценку.' : ''}</p>
+    ${topics.length ? `<div class="session-learning-results">${topics.map(g=> {
+      const results = first.filter(r=>r.kind==='grammar' && r.id===g.id);
+      const checks = results.filter(r=>r.stage==='apply');
+      const independent = g.checks.every((_,i)=>checks.some(r=>r.index===i && r.correct && !r.assisted));
+      return `<article><span class="eyebrow">${independent ? 'ВЫПОЛНИЛ САМОСТОЯТЕЛЬНО' : results.some(r=>r.stage==='guided') ? 'ПОРАБОТАЛ С ОБЪЯСНЕНИЕМ' : 'ПОВТОРИЛ ТЕМУ'}</span><strong>${e(g.title)}</strong><p>${e(g.guide.goal)}</p>${checks.some(r=>!r.correct) ? '<small>Выбор формы ещё стоит потренировать без опоры.</small>' : ''}</article>`;
+    }).join('')}</div>` : ''}
+    <div class="summary-stats"><div>${icon('bolt')}<strong>+${xp}</strong><span>XP за практику</span></div><div>${icon('flame')}<strong>${game.streak}</strong><span>дней подряд</span></div><div>${icon('check')}<strong>${first.length}</strong><span>заданий разобрано</span></div></div>
+    ${errors.length ? '<p class="memory-caption">Сложные задания вернулись в занятие. Повторения по расписанию помогут проверить память позже.</p>' : ''}
+    ${writingTopic ? `<div class="summary-writing"><h2>Теперь — своя мысль</h2>${writingView(writingTopic)}</div>` : ''}
+    <div class="summary-next"><span class="eyebrow">СЛЕДУЮЩИЙ ШАГ</span><h2>${e(next?.title || 'Продолжай практиковаться')}</h2><p>${e(next?.guide.goal || 'Выбери чтение, письмо или повторение изученных тем.')}</p>${btn(next ? 'Продолжить курс ' + icon('arrow') : 'Открыть практику', next ? 'daily' : 'nav', 'primary full', next ? '' : 'data-page="practice"')}</div>
+    <div class="dialog-actions">${btn('Моя карта курса', 'nav', 'outline', 'data-page="course"')}${btn('Посмотреть прогресс', 'nav', 'outline', 'data-page="progress"')}</div><p class="content-note">XP отмечают практику. Прохождение, самостоятельные ответы и повторения спустя время считаются отдельно.</p></section>`;
 }
 
 function addWord() {
   showDialog(`<span class="eyebrow">ИЗ ТВОЕГО МИРА</span><h2>Слово, которое встретилось</h2><p class="muted">Сохрани выражение вместе с примером из текста.</p><form id="custom-form"><label>Слово или выражение<input name="term" required maxlength="80" placeholder="e.g. make a difference" autocomplete="off"></label><label>Значение на русском<input name="ru" required maxlength="160" placeholder="иметь значение, влиять" autocomplete="off"></label><label>Пример на английском<textarea name="example" required maxlength="600" rows="3" placeholder="Small changes can make a difference."></textarea></label><label>Перевод примера <span class="muted">· необязательно</span><textarea name="translation" maxlength="600" rows="2"></textarea></label><button class="btn primary full" type="submit">${icon('plus')} Добавить в практику</button></form>`);
 }
 function settings() {
-  showDialog(`<span class="eyebrow">В СВОЁМ ТЕМПЕ</span><h2>Твой английский</h2><div class="theme-picker" role="group" aria-label="Тема оформления">${[['light','sun','Светлая'],['dark','moon','Тёмная']].map(([id,glyph,label]) => `<button class="theme-choice ${document.documentElement.dataset.theme === id ? 'selected' : ''}" data-action="set-theme" data-id="${id}" aria-pressed="${document.documentElement.dataset.theme === id}">${icon(glyph)}${label}</button>`).join('')}</div><p>Словарь: B1–C1. Грамматика: A1 → C1. Все темы открыты.</p><label class="setting-label" for="study-level">Уровень новых материалов в ежедневном занятии</label><select id="study-level">${['all','B2','C1'].map(level => `<option value="${level}" ${state.studyLevel === level ? 'selected' : ''}>${level === 'all' ? 'По порядку, с основ' : level}</option>`).join('')}</select><p class="content-note">Выбор влияет на новые слова, грамматику и чтение. Уже изученные материалы любого уровня продолжают возвращаться по расписанию. Метка C1 обозначает материал, а не присвоенный тебе уровень.</p><label class="setting-label" for="daily-target">Цель на день — проверенные ответы</label><select id="daily-target">${[5,10,15,20].map(n => `<option value="${n}" ${state.dailyTarget === n ? 'selected' : ''}>${n} заданий</option>`).join('')}</select><label class="setting-label" for="new-word-limit">Новых слов в день</label><select id="new-word-limit">${[0,3,5,10].map(n => `<option value="${n}" ${state.newWordsPerDay === n ? 'selected' : ''}>${n === 0 ? 'Только повторение' : n + ' слов'}</option>`).join('')}</select><p class="content-note">При очереди от 20 слов новые временно не добавляются. Пропущенный день не обнуляет прогресс. Сначала разбираем то, что уже учили.</p><div class="settings-note">${icon('leaf')}<p>FSRS подбирает интервалы отдельно для понимания и воспроизведения, ориентируясь на твои ответы. Цель модели — около 90% успешных повторений; это настройка, а не гарантия результата.</p></div><p class="content-note">Readwell 0.6.0 · Всё работает без интернета. Прогресс и свои слова сохраняются на устройстве. Старые данные перенесены; новые показатели навыков начнут заполняться после раздельных проверок. Удаление данных приложения удалит прогресс.</p>${btn('Готово','close-dialog','primary full')}`);
+  showDialog(`<span class="eyebrow">В СВОЁМ ТЕМПЕ</span><h2>Твой английский</h2><div class="theme-picker" role="group" aria-label="Тема оформления">${[['light','sun','Светлая'],['dark','moon','Тёмная']].map(([id,glyph,label]) => `<button class="theme-choice ${document.documentElement.dataset.theme === id ? 'selected' : ''}" data-action="set-theme" data-id="${id}" aria-pressed="${document.documentElement.dataset.theme === id}">${icon(glyph)}${label}</button>`).join('')}</div><p>Словарь: B1–C1. Грамматика: A1 → C1. Все темы открыты.</p><label class="setting-label" for="study-level">Новые слова и тексты в ежедневном занятии</label><select id="study-level">${['all','B1','B2','C1'].map(level => `<option value="${level}" ${state.studyLevel === level ? 'selected' : ''}>${level === 'all' ? 'Все материалы, начиная с B1' : level}</option>`).join('')}</select><p class="content-note">Выбор влияет на новые слова и тексты. Грамматика идёт по выбранному маршруту. Уже изученные материалы любого уровня продолжают возвращаться по расписанию. Метка C1 обозначает материал, а не присвоенный тебе уровень.</p><label class="setting-label" for="course-entry">С какой главы продолжать грамматику</label><select id="course-entry">${state.courseStart && !chapters.some(c => c.lessons[0] === state.courseStart) ? `<option value="${state.courseStart}" selected>С выбранной темы: ${e(grammar.find(g => g.id === state.courseStart)?.title)}</option>` : ''}${chapters.map(c => `<option value="${c.lessons[0]}" ${c.lessons[0] === state.courseStart ? 'selected' : ''}>${c.level} · ${e(c.title)}</option>`).join('')}</select><p class="content-note">Все темы остаются доступны. Пропуск главы не отмечает её пройденной. Выбор не меняет незавершённое занятие.</p><label class="setting-label" for="daily-target">Цель на день — проверенные ответы</label><select id="daily-target">${[5,10,15,20].map(n => `<option value="${n}" ${state.dailyTarget === n ? 'selected' : ''}>${n} заданий</option>`).join('')}</select><label class="setting-label" for="new-word-limit">Новых слов в день</label><select id="new-word-limit">${[0,3,5,10].map(n => `<option value="${n}" ${state.newWordsPerDay === n ? 'selected' : ''}>${n === 0 ? 'Только повторение' : n + ' слов'}</option>`).join('')}</select><p class="content-note">При очереди от 20 слов новые временно не добавляются. Пропущенный день не обнуляет прогресс. Сначала разбираем то, что уже учили.</p><div class="settings-note">${icon('leaf')}<p>FSRS подбирает интервалы отдельно для понимания и воспроизведения, ориентируясь на твои ответы. Цель модели — около 90% успешных повторений; это настройка, а не гарантия результата.</p></div><p class="content-note">Readwell 0.7.1 · Всё работает без интернета. Прогресс и свои слова сохраняются на устройстве. Старые данные перенесены; новые показатели навыков начнут заполняться после раздельных проверок. Удаление данных приложения удалит прогресс.</p>${btn('Готово','close-dialog','primary full')}`);
 }document.addEventListener('click', event => {
   const button = event.target.closest('[data-action]'); if (!button) return;
   const { action, id } = button.dataset;
@@ -408,6 +459,39 @@ function settings() {
   else if (action === 'toggle-theme') applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
   else if (action === 'set-theme') applyTheme(id);
   else if (action === 'daily') daily();
+  else if (action === 'due-practice') duePractice();
+  else if (action === 'lesson-back') { dialog.close(); navigate(lessonReturn === 'lesson' ? 'course' : lessonReturn); }
+  else if (action === 'course-chapter') { state.openChapter = id; save(); navigate('course'); }
+  else if (action === 'course-focus') {
+    state.courseFocus = id; state.courseStart = id; state.openChapter = chapterFor(id).id; save(); navigate('course');
+    toast(state.session ? 'Тема выбрана для следующего занятия. Текущее занятие сохранено.' : 'Продолжим курс с выбранной темы.');
+  }
+  else if (action === 'grammar-understood') {
+    const session = state.session;
+    if (session?.queue[session.index]?.id !== id || session.queue[session.index].stage !== 'guided' || feedback) return;
+    session.grammarIntroduced ||= [];
+    if (!session.grammarIntroduced.includes(id)) session.grammarIntroduced.push(id);
+    save(); render(); window.scrollTo(0, 0);
+  }
+  else if (action === 'grammar-term') {
+    const term = grammarTerms[id]; if (!term) return;
+    const area = button.closest('.grammar-guide');
+    const definition = area?.querySelector('.term-definition');
+    if (definition) {
+      area.querySelector('.grammar-glossary').open = true;
+      definition.innerHTML = `<strong>${e(term[0])}</strong><p>${e(term[1])}</p>`;
+      definition.scrollIntoView({ block: 'nearest' });
+    }
+  }
+  else if (action === 'chapter-check') {
+    const chapter = chapters.find(c => c.id === id); if (!chapter) return;
+    startSession('Самопроверка: ' + chapter.title, chapter.lessons.flatMap(id => grammarTasks(grammar.find(g => g.id === id), 'apply')), 'course');
+  }
+  else if (action === 'difficult-grammar') {
+    const list = grammar.filter(g => lessonStatus(state, g).needsPractice);
+    if (!list.length) { toast('Пока нет тем с отмеченными трудностями. Можно продолжить курс.'); return; }
+    startSession('Разбираемся с трудными местами', list.slice(0, 4).flatMap(g => grammarTasks(g, 'apply')), 'practice');
+  }
   else if (action === 'review') {
     const list = page === 'vocabulary' ? filteredWords() : allWords();
     startSession(page === 'vocabulary' && wordLevel !== 'all' ? `Лексика ${wordLevel} · выбранная подборка` : 'Практика слов · в своём темпе',wordTasks(chooseWords(state,list,12,practiceMode)));
@@ -436,7 +520,11 @@ function settings() {
     if (!input.value.trim()) { toast('Сначала попробуй написать свой ответ.'); input.focus(); return; }
     state.writingNotes[id] = input.value; save(); document.querySelector('#writing-model').hidden = false;
   }
-  else if (action === 'start-grammar') startSession(grammar.find(g => g.id === id).subtitle, grammarTasks(grammar.find(g => g.id === id)), 'grammar');
+  else if (action === 'start-grammar') {
+    const g = grammar.find(g => g.id === id);
+    startSession(g.title, [...grammarTasks(g), ...grammarTasks(g, 'apply')], 'course', [id]);
+  }
+  else if (action === 'check-grammar') startSession('Самостоятельная практика', grammarTasks(grammar.find(g => g.id === id), 'apply'), 'course');
   else if (action === 'read') showReading(id);
   else if (action === 'reading-filter') { readingFilter = id; render(); }
   else if (action === 'start-reading') startSession('Читаем и понимаем', readingTasks(readings.find(r => r.id === id)), 'reading');
@@ -495,11 +583,19 @@ document.addEventListener('input', event => {
   if (event.target.id === 'retell-input') { state.readingNotes[event.target.dataset.id] = event.target.value; save(); }
 });
 document.addEventListener('toggle', event => {
+  if (event.target.matches?.('details[data-section="mixed"]') && state) state.practiceMixedOpen = event.target.open;
+  if (event.target.matches?.('details[data-chapter]') && event.target.open && state) {
+    state.openChapter = event.target.dataset.chapter; save();
+  }
   if (event.target.matches?.('details[data-help]') && event.target.open && state.session && !feedback) {
     state.session.queue[state.session.index].assisted = true; save();
   }
 },true);
 document.addEventListener('change', event => {
+  if (event.target.id === 'course-entry') {
+    state.courseStart = event.target.value || grammar[0].id; state.courseFocus = null; state.openChapter = chapterFor(state.courseStart)?.id || null;
+    save(); render(); toast('Начало маршрута обновлено. Текущее занятие сохранено.');
+  }
   if (event.target.dataset.workshopCheck !== undefined) {
     const draft = state.workshopDrafts[event.target.dataset.workshop];
     if (draft?.text === draft?.reviewedText) { (draft.checks ||= [])[Number(event.target.dataset.workshopCheck)] = event.target.checked; save(); }
@@ -540,11 +636,15 @@ document.addEventListener('submit', event => {
 dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
 window.appBack = () => {
   if (dialog.open) { dialog.close(); return true; }
+  if (page === 'lesson') { navigate(lessonReturn === 'lesson' ? 'course' : lessonReturn); return true; }
+  if (['vocabulary', 'reading', 'writing'].includes(page)) { navigate('practice'); return true; }
+  if (page === 'grammar') { navigate('course'); return true; }
   if (page !== 'today' || summary) { navigate('today'); return true; }
   return false;
 };
 try {
   state = loadState();
+  state.courseStart ||= grammar.find(g => state.studyLevel === 'all' || g.level === state.studyLevel)?.id || grammar[0].id;
   feedback = state.session?.feedback || null;
   render();
 } catch (error) {

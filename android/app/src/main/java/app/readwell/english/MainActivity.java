@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
         }
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setDomStorageEnabled(true);
+        webView.getSettings().setTextZoom(Math.round(getResources().getConfiguration().fontScale * 100));
         webView.getSettings().setAllowFileAccess(false);
         webView.getSettings().setAllowContentAccess(false);
         webView.getSettings().setMediaPlaybackRequiresUserGesture(true);
@@ -94,7 +95,7 @@ public class MainActivity extends Activity {
     private void applyNativeTheme(String theme) {
         if (!"dark".equals(theme) && !"light".equals(theme)) return;
         boolean dark = "dark".equals(theme);
-        int background = Color.parseColor(dark ? "#0f1a24" : "#f6f9fc");
+        int background = Color.parseColor(dark ? "#141313" : "#f6f1e8");
         container.setBackgroundColor(background);
         webView.setBackgroundColor(background);
         getWindow().setStatusBarColor(background);

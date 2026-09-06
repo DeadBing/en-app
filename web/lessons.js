@@ -1,6 +1,8 @@
 import { advancedGrammar } from './advanced-grammar.js';
 import { advancedReadings } from './advanced-readings.js';
 import { practicalReadings } from './practical-readings.js';
+import { enrichFoundations } from './grammar-foundations.js';
+import { grammarGuides } from './grammar-guides.js';
 
 function lesson(id, level, title, subtitle, rule, examples, tasks) {
   return { id, level, title, subtitle, rule, examples, tasks: tasks.map(([prompt, answer, why, alternatives = []]) => ({ prompt, answer, why, alternatives })) };
@@ -113,8 +115,8 @@ export const grammar = [
     ]),
   lesson('relative', 'B1', 'Уточнять без лишних предложений', 'Who, which, that, whose',
     'Who относится к людям, which — к предметам; that часто заменяет их в определяющих придаточных без запятой. Whose указывает на принадлежность. Эти конструкции помогают читать длинные предложения по частям.',
-    ['The person who wrote this is a teacher.', 'The app that I use works offline.', 'A writer whose books I enjoy.'], [
-      ['A person ___ helps others. (who / which)', 'who', 'Для человека подходит who.'],
+    ['The person who wrote this is a teacher.', 'The app that I use works offline.', 'I met a writer whose books I enjoy.'], [
+      ['A person ___ helps others can make a difference. (who / which)', 'who', 'Who связывает человека с действием helps; can make a difference завершает основную мысль.', ['that']],
       ['The tool ___ I use is free. (which / who)', 'which', 'Для предмета — which; в таком контексте также допустимо that.', ['that']],
       ['The author ___ book I read lives nearby.', 'whose', 'Whose book = чью книгу.'],
       ['The post ___ you shared was helpful. (that / whose)', 'that', 'That связывает post с уточнением you shared.'],
@@ -139,6 +141,13 @@ export const grammar = [
 
 // Original educational texts inspired by formats, not copied social posts.
 grammar.push(...advancedGrammar);
+enrichFoundations(grammar);
+for (const g of grammar) {
+  g.guide = grammarGuides[g.id];
+  g.checks = g.guide.checks.map(q => ({ ...q, lessonId: g.id }));
+  g.writing ||= g.guide.writing;
+  g.tasks.forEach(q => { q.lessonId = g.id; });
+}
 
 export const readings = [
   {

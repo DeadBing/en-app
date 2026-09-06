@@ -5,7 +5,7 @@ export const LEGACY_KEY = 'readwell.v1';
 export const DAY = 86400000;
 export const dayKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const scheduler = fsrs({ request_retention: 0.9, maximum_interval: 365, enable_fuzz: false, learning_steps: ['10m'], relearning_steps: ['10m'] });
-const empty = () => ({ version: 2, cards: {}, lessons: {}, readings: {}, grammarCards: {}, transferCards: {}, workshopDrafts: {}, days: {}, custom: [], saved: [], notes: {}, readingNotes: {}, writingNotes: {}, studyLevel: 'all', session: null, dailyTarget: 10, newWordsPerDay: 5 });
+const empty = () => ({ version: 2, cards: {}, lessons: {}, readings: {}, grammarCards: {}, courseProgress: {}, courseStart: null, courseFocus: null, transferCards: {}, workshopDrafts: {}, days: {}, custom: [], saved: [], notes: {}, readingNotes: {}, writingNotes: {}, studyLevel: 'all', session: null, dailyTarget: 10, newWordsPerDay: 5 });
 
 export function loadState(storage = localStorage) {
   const current = storage.getItem(STORAGE_KEY);
@@ -92,9 +92,13 @@ export function reviewWord(state, id, rating, mode = 'recall', now = Date.now(),
   card.due = wordDue(card, 'mixed', now);
   return schedule;
 }
+export const grammarKey = task => `${task.id}:${task.stage === 'apply' ? 'apply:' : ''}${task.index}`;
 export function reviewGrammar(state, task, correct, now = Date.now(), practice = false) {
-  const track = state.grammarCards[`${task.id}:${task.index}`] ||= { successDays: 0 };
-  return reviewTrack(track, correct ? Rating.Good : Rating.Again, now, practice);
+  if (task.stage === 'guided') return { learning: true };
+  const track = state.grammarCards[grammarKey(task)] ||= { successDays: 0 };
+  const schedule = reviewTrack(track, correct ? Rating.Good : Rating.Again, now, practice);
+  if (!practice && (task.stage !== 'apply' || !schedule.practice)) track.lastCorrect = correct;
+  return schedule;
 }
 export function reviewTransfer(state, task, correct, now = Date.now(), practice = false) {
   const track = state.transferCards[task.id] ||= { successDays: 0 };
@@ -152,7 +156,7 @@ export function chooseWords(state, words, count = 8, mode = 'mixed', now = Date.
   for (let i = 0; i < Math.max(0, ...Object.values(buckets).map(b => b.length)); i++) for (const bucket of Object.values(buckets)) if (bucket[i]) broad.push(bucket[i]);
   return [...due, ...[...priority, ...broad].slice(0, newAllowance)].slice(0, count);
 }
-export function chooseGrammar(state, lessons, count = 4, now = Date.now(), freshLevel = 'all') {
+export function chooseGrammar(state, lessons, count = 4, now = Date.now(), freshLevel = 'all', dueOnly = false) {
   const due = [];
   const fresh = [];
   for (let index = 0; index < Math.max(...lessons.map(g => g.tasks.length)); index++) {
@@ -163,7 +167,13 @@ export function chooseGrammar(state, lessons, count = 4, now = Date.now(), fresh
       if (track?.card ? time(track.card.due) <= now : state.lessons[g.id]?.practiced) due.push(task);
     }
   }
-  due.sort((a, b) => (time(state.grammarCards[`${a.id}:${a.index}`]?.card?.due) || 0) - (time(state.grammarCards[`${b.id}:${b.index}`]?.card?.due) || 0));
+  for (const g of lessons) for (let index = 0; index < (g.checks?.length || 0); index++) {
+    const task = { kind: 'grammar', id: g.id, index, stage: 'apply', key: `grammar:${g.id}:apply:${index}` };
+    const track = state.grammarCards[grammarKey(task)];
+    if (track?.card && time(track.card.due) <= now) due.push(task);
+  }
+  due.sort((a, b) => (time(state.grammarCards[grammarKey(a)]?.card?.due) || 0) - (time(state.grammarCards[grammarKey(b)]?.card?.due) || 0));
+  if (dueOnly) return due.slice(0, count);
   const next = lessons.find(g => (freshLevel === 'all' || g.level === freshLevel) && !state.lessons[g.id]?.completed && g.tasks.some((_, i) => !state.grammarCards[`${g.id}:${i}`]));
   if (next) for (let index = 0; index < next.tasks.length; index++) if (!state.grammarCards[`${next.id}:${index}`] && !due.some(t => t.id === next.id && t.index === index)) fresh.push({ kind: 'grammar', id: next.id, index, key: `grammar:${next.id}:${index}` });
   return [...due, ...fresh].slice(0, count);

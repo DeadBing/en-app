@@ -3,18 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#f6f9fc" />
+    <meta name="theme-color" content="#f6f1e8" />
     <script>
       let theme;
       try { theme = localStorage.getItem('readwell.theme'); } catch {}
       if (theme !== 'light' && theme !== 'dark') theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       document.documentElement.dataset.theme = theme;
-      document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0f1a24' : '#f6f9fc';
+      document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#141313' : '#f6f1e8';
     </script>
     <meta name="description" content="Readwell — английский для текстов, мыслей и настоящей жизни." />
     <title>Readwell — английский для жизни</title>
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./course.css" />
   </head>
   <body>
     <div id="app"></div>

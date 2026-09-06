@@ -3,6 +3,8 @@ import { normalize } from './store.js';
 // Deliberately local pattern notes, not a syntactic parser. Only matched
 // constructions are explained; arbitrary custom text is not assigned a full parse.
 const patterns = [
+  [/\bwill (?:not )?have (?:been [a-z]+ing|[a-z]+ed|written|done|seen|gone|made|left|taken|built)\b/i, 'Результат к будущему моменту', 'Will have + V3 — действие будет завершено к будущей точке. Will have been + -ing подчёркивает длительность к ней.', 'future-perfect'],
+  [/\b(?:am|is|are|was|were) (?:not )?used to [a-z]+ing\b/i, 'Привычность', 'Be used to + -ing означает «быть привычным к действию». Здесь used to не описывает использование предмета.', 'used-to'],
   [/\b(?:have|has|had) been [a-z]+ing\b/i, 'Длительный процесс', 'Been + -ing выделяет процесс. Have/has связывает его с настоящим, had — с прошлым моментом.', 'perfect-continuous'],
   [/\b(?:is|are|was|were) being [a-z]+ed\b/i, 'Процесс в пассиве', 'Действие совершается над подлежащим; being показывает процесс.', 'passive-advanced'],
   [/\b(?:will|would|may|might|must|should|could|cannot|can.t) have (?:been|[a-z]+ed|seen|gone|done|known|written|taken|left|lost|found|bought|kept)\b/i, 'Модальный глагол + have + V3', 'Perfect относит действие к более раннему моменту. Модальный глагол добавляет вероятность, оценку или условность.', 'past-modals'],
@@ -45,18 +47,24 @@ const contains = (sentence, term) => {
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(?<![a-z])${escaped}(?![a-z])`, 'i').test(sentence);
 };
-export function sentenceAnalysis(sentence, word, vocabulary = []) {
+export function sentenceAnalysis(sentence, word, vocabulary = [], explicit = null) {
   const notes = [];
   if (word) notes.push({ text: word.term, explanation: word.ru, lessonId: null });
   for (const w of vocabulary) {
     if (w.term !== word?.term && w.term.includes(' ') && contains(sentence, w.term)) notes.push({ text: w.term, explanation: w.ru, lessonId: null });
     if (notes.length >= 4) break;
   }
+  if (explicit?.lessonId) return [...notes, { text: explicit.sentence || sentence, explanation: explicit.why, lessonId: explicit.lessonId }];
   if (sentenceNotes[sentence]) return [...notes, ...sentenceNotes[sentence].map(([text, explanation, lessonId]) => ({ text, explanation, lessonId }))];
   let count = 0;
+  const spans = [];
   for (const [pattern, title, explanation, lessonId] of patterns) {
     const match = sentence.match(pattern);
-    if (match) { notes.push({ text: match[0], explanation: `${title}. ${explanation}`, lessonId }); if (++count === 3) break; }
+    if (match && !spans.some(([start, end]) => match.index < end && match.index + match[0].length > start)) {
+      spans.push([match.index, match.index + match[0].length]);
+      notes.push({ text: match[0], explanation: `${title}. ${explanation}`, lessonId });
+      if (++count === 3) break;
+    }
   }
   return notes;
 }
