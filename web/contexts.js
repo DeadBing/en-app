@@ -199,6 +199,7 @@ Object.assign(contexts, Object.fromEntries(expandedWords.map(w => [w.term, w.sec
 
 // Keep the sentence and its translation together, including restored sessions.
 export function wordContext(word, exampleIndex = 0) {
+  if (word.examples?.length) return word.examples[exampleIndex % word.examples.length];
   if (exampleIndex && !word.id.startsWith('custom:') && contexts[word.term]) {
     return { example: contexts[word.term], translation: contextTranslations[word.term] || '' };
   }

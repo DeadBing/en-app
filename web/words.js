@@ -1,4 +1,5 @@
 import { expandedWords } from './vocabulary-expansion.js';
+import { practicalWords } from './practical-vocabulary.js';
 // Original teaching examples. Topic IDs and terms form stable progress keys.
 export const topics = [
   { id: 'thoughts', name: 'Мысли и аргументы', en: 'Make your point', icon: 'message', color: 'sage', description: 'Понимать позицию автора и выражать свою' },
@@ -237,4 +238,4 @@ keep in mind|иметь в виду|B1|Please keep in mind that this is a draft.
 export const words = Object.entries(groups).flatMap(([topic, data]) => data.trim().split('\n').map(row => {
   const [term, ru, level, example, translation] = row.split('|');
   return { id: `${topic}:${term}`, topic, term, ru, level, example, translation };
-})).concat(expandedWords);
+})).concat(expandedWords, practicalWords);

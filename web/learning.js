@@ -75,6 +75,7 @@ export function answerDiagnosis(value, question, kind, vocabulary = []) {
   if (mistake) return { title: 'Почему эта форма не подходит', text: mistake[1] };
   if (kind === 'reading') return { title: 'Вернись к аргументу автора', text: question.why };
   if (kind === 'grammar') return { title: 'Проверь конструкцию', text: question.why };
+  if (kind === 'transfer') return { title: question.skill, text: question.why };
   const known = vocabulary.find(w => normalize(w.term) === actual);
   if (known) return { title: 'Другое выражение', text: `«${known.term}» в словаре: ${known.ru}. Здесь закрепляем «${question.answer}». Это сравнение с целевой карточкой, а не проверка всех возможных синонимов.` };
   const a = actual.split(' '), b = expected.split(' ');

@@ -5,7 +5,7 @@ export const LEGACY_KEY = 'readwell.v1';
 export const DAY = 86400000;
 export const dayKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const scheduler = fsrs({ request_retention: 0.9, maximum_interval: 365, enable_fuzz: false, learning_steps: ['10m'], relearning_steps: ['10m'] });
-const empty = () => ({ version: 2, cards: {}, lessons: {}, readings: {}, grammarCards: {}, days: {}, custom: [], saved: [], notes: {}, readingNotes: {}, writingNotes: {}, studyLevel: 'all', session: null, dailyTarget: 10, newWordsPerDay: 5 });
+const empty = () => ({ version: 2, cards: {}, lessons: {}, readings: {}, grammarCards: {}, transferCards: {}, workshopDrafts: {}, days: {}, custom: [], saved: [], notes: {}, readingNotes: {}, writingNotes: {}, studyLevel: 'all', session: null, dailyTarget: 10, newWordsPerDay: 5 });
 
 export function loadState(storage = localStorage) {
   const current = storage.getItem(STORAGE_KEY);
@@ -95,6 +95,27 @@ export function reviewWord(state, id, rating, mode = 'recall', now = Date.now(),
 export function reviewGrammar(state, task, correct, now = Date.now(), practice = false) {
   const track = state.grammarCards[`${task.id}:${task.index}`] ||= { successDays: 0 };
   return reviewTrack(track, correct ? Rating.Good : Rating.Again, now, practice);
+}
+export function reviewTransfer(state, task, correct, now = Date.now(), practice = false) {
+  const track = state.transferCards[task.id] ||= { successDays: 0 };
+  if (!practice) track.lastCorrect = correct;
+  return reviewTrack(track, correct ? Rating.Good : Rating.Again, now, practice);
+}
+export function chooseTransfer(state, tasks, count = 8, now = Date.now(), level = 'all', dueOnly = false) {
+  const due = tasks.filter(q => state.transferCards[q.id]?.card && time(state.transferCards[q.id].card.due) <= now)
+    .sort((a,b) => time(state.transferCards[a.id].card.due) - time(state.transferCards[b.id].card.due));
+  if (dueOnly) return due.slice(0,count).map(q => ({kind:'transfer',id:q.id,key:`transfer:${q.id}`}));
+  const shuffle = list => {
+    for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [list[i],list[j]] = [list[j],list[i]]; }
+    return list;
+  };
+  const fresh = shuffle(tasks.filter(q => !state.transferCards[q.id]?.card && (level === 'all' || q.level === level)));
+  const buckets = {};
+  for (const q of fresh) (buckets[q.skill] ||= []).push(q);
+  const mixed = [];
+  while (Object.values(buckets).some(b => b.length)) for (const bucket of Object.values(buckets)) if (bucket.length) mixed.push(bucket.pop());
+  const early = shuffle(tasks.filter(q => state.transferCards[q.id]?.card && time(state.transferCards[q.id].card.due) > now && (level === 'all' || q.level === level)));
+  return [...due,...mixed,...early].slice(0,count).map(q => ({kind:'transfer',id:q.id,key:`transfer:${q.id}`}));
 }
 export function ratingIntervals(state, id, mode, now = Date.now(), practice = false) {
   const card = state.cards[id]?.tracks?.[trackName(mode)]?.card;

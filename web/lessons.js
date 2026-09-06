@@ -1,5 +1,6 @@
 import { advancedGrammar } from './advanced-grammar.js';
 import { advancedReadings } from './advanced-readings.js';
+import { practicalReadings } from './practical-readings.js';
 
 function lesson(id, level, title, subtitle, rule, examples, tasks) {
   return { id, level, title, subtitle, rule, examples, tasks: tasks.map(([prompt, answer, why, alternatives = []]) => ({ prompt, answer, why, alternatives })) };
@@ -215,3 +216,4 @@ export const readings = [
 ];
 
 readings.push(...advancedReadings);
+readings.push(...practicalReadings);
